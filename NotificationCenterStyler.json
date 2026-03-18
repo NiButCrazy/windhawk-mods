@@ -18,7 +18,7 @@
   "controlStyles[4].styles[0]": "Background@Normal:= $CommonBgBrush2",
   "controlStyles[4].styles[1]": "Background@Checked:=$Accent",
   "styleConstants[4]": "Accent = <WindhawkBlur BlurAmount=\"10\" TintColor=\"{ThemeResource SystemAccentColor}\"  TintOpacity=\".9\"/>",
-  "styleConstants[5]": "CommonBgBrush2=<WindhawkBlur BlurAmount=\"5\" TintColor=\"{ThemeResource SystemChromeMediumHighColor}\"  TintOpacity=\".2\"/>",
+  "styleConstants[5]": "CommonBgBrush2=<WindhawkBlur BlurAmount=\"5\" TintColor=\"{ThemeResource SystemChromeHighColor}\"  TintOpacity=\".2\"/>",
   "controlStyles[4].styles[2]": "BorderBrush:=$ElementBorderBrush",
   "styleConstants[6]": "ElementBorderBrush=<LinearGradientBrush StartPoint=\"0,0\" EndPoint=\"0,1\"><GradientStop Color=\"#50808080\" Offset=\"1\" /><GradientStop Color=\"#50606060\" Offset=\"0.15\" /></LinearGradientBrush>",
   "styleConstants[7]": "ElementBorderThickness=0.3,0.3,0.3,1",
