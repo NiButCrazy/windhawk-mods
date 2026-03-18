@@ -67,5 +67,7 @@
   "controlStyles[14].styles[4]": "Margin=0,10,0,0",
   "controlStyles[14].styles[5]": "BorderBrush:=$BorderBrush",
   "controlStyles[14].styles[6]": "Grid.Row=1",
-  "styleConstants[12]": "BorderBrush=<LinearGradientBrush StartPoint=\"0,0\" EndPoint=\"0,1\"><GradientStop Color=\"#50808080\" Offset=\"0.0\" /><GradientStop Color=\"#50404040\" Offset=\"0.25\" /><GradientStop Color=\"#50808080\" Offset=\"1\" /></LinearGradientBrush>"
+  "styleConstants[12]": "BorderBrush=<LinearGradientBrush StartPoint=\"0,0\" EndPoint=\"0,1\"><GradientStop Color=\"#50808080\" Offset=\"0.0\" /><GradientStop Color=\"#50404040\" Offset=\"0.25\" /><GradientStop Color=\"#50808080\" Offset=\"1\" /></LinearGradientBrush>",
+  "controlStyles[15].target": "ToolTip > ContentPresenter#LayoutRoot",
+  "controlStyles[15].styles[0]": "Background:=$CommonBgBrush"
 }
