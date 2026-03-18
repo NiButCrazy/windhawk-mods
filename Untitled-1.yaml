@@ -1,0 +1,223 @@
+- RenderingMod:
+    - ThemeBackground: FALSE
+      $name: Windows 主题自定义渲染
+      $description: >-
+        使用 Direct2D 图形应用程序接口修改 Windows 主题的部分内容
+    - AccentColorControls: FALSE
+      $name: Windows 主题调色器
+      $description: >-
+       为 Windows 主题部分涂上强调色(需要 Windows 主题自定义渲染）
+    - TextAlphaBlend: FALSE
+      $name: 文字的透明度混合
+      $description: >-
+        对 Windows GDI 文本渲染进行 Alpha 混合
+  $name: 自定义渲染
+- type: none
+  $name: 效果
+  $description: >-
+    要使用 SystemBackdrop 效果，需要 Windows 11 版本 ≥ 22621.xxx（22H2）
+  $options:
+  - none: Default
+  - acrylicblur: Blur (AccentBlurBehind)
+  - acrylicsystem: Acrylic (SystemBackdrop)
+  - mica: Mica (SystemBackdrop)
+  - mica_tabbed: MicaAlt (SystemBackdrop)
+- AccentBlurBehind: "00000000"
+  $name: AccentBlurBehind 背景虚化的颜色混合
+  $description: >-
+    将颜色与模糊后的背景进行混合
+    颜色使用十六进制 ARGB 格式表示，例如 0F000000
+- ImmersiveDarkTitle: FALSE
+  $name: 自动切换深色模式标题栏（监听型）
+  $description: >-
+    正常来讲，一个新打开的应用会自行匹配深色模式标题栏，但像是explorer这种只打开新窗口而不重新启动的应用只能使用监听模式了
+- ExtendFrame: FALSE
+  $name: 将效果扩展到整个窗口
+  $description: >-
+    使用 DwmExtendFrameIntoClientArea 将效果扩展到整个窗口背景
+- CornerOption: default
+  $name: 窗口角类型
+  $description: >-
+    指定窗口的圆角偏好设置
+    需要 Windows 11 版本 ≥ 22000.xxx（21H2）
+  $options: 
+  - default: Default
+  - notrounded: 无圆角
+  - smallround: win11 圆角
+- RainbowSpeed: 1
+  $name: 彩虹速度
+  $description: 调整彩虹颜色的刷新速度（取值范围 1 到 100）
+- TitlebarColor:
+    - ColorTitlebar: FALSE
+      $name: 开启
+    - RainbowTitlebar: FALSE
+      $name: 彩虹标题栏
+      $description: 启用窗口标题栏的彩虹效果
+    - titlerbarstyles_active: "FF0000"
+      $name: 聚焦窗口颜色
+      $description: >-
+       以十六进制 RGB 格式表示的颜色，例如红色 = FF0000
+        SystemAccentColor = 2
+    - titlerbarstyles_inactive: "00FFFF"
+      $name: 未聚焦窗口颜色
+      $description: >-
+       以十六进制 RGB 格式表示的颜色，例如红色 = FF0000
+        SystemAccentColor = 2
+  $name: 标题栏颜色
+  $description: 需要 Windows 11 版本 ≥ 22000.xxx（21H2），此设置将覆盖效果设置。
+- TitlebarTextColor:
+    - ColorTitlebarText: FALSE
+      $name: 开启
+    - RainbowTextColor: FALSE
+      $name: 彩虹标题栏文本颜色
+      $description: 启用窗口标题栏文字的彩虹效果
+    - titlerbarcolorstyles_active: "FF0000"
+      $name: 聚焦窗口颜色
+      $description: >-
+       以十六进制 RGB 格式表示的颜色，例如红色 = FF0000
+        Default = 1
+        SystemAccentColor = 2
+    - titlerbarcolorstyles_inactive: "00FFFF"
+      $name: 未聚焦窗口颜色
+      $description: >-
+       以十六进制 RGB 格式表示的颜色，例如红色 = FF0000
+        Default = 1
+        SystemAccentColor = 2
+  $name: 彩虹标题栏文本颜色
+  $description: >-
+     需要 Windows 11 版本 ≥ 22000.xxx（21H2）。
+     注意：此设置仅影响传统 Win32 窗口。由于在 Windows 11 22H2 中，文件资源管理器的标题栏文字渲染方式已改为使用 DirectWrite API，因此要修改文件资源管理器标题栏的文字颜色，请使用 Windhawk 的 File Explorer Styler 模块
+- BorderColor:
+    - ColorBorder: FALSE
+      $name: 开启
+    - RainbowBorder: FALSE
+      $name: 彩虹边框
+      $description: 启用窗口边框的彩虹效果
+    - borderstyles_active: "FF0000"
+      $name: 聚焦窗口颜色
+      $description: >-
+       以十六进制 RGB 格式表示的颜色，例如红色 = FF0000
+        Transparent = 0
+        Default = 1
+        SystemAccentColor = 2
+    - borderstyles_inactive: "00FFFF"
+      $name: 未聚焦窗口颜色
+      $description: >-
+       以十六进制 RGB 格式表示的颜色，例如红色 = FF0000
+        Transparent = 0
+        Default = 1
+        SystemAccentColor = 2
+    - MenuBorderColor: FALSE
+      $name: 将彩色边框效果扩展到经典右键菜单
+      $description: 启用此选项可在 Windows 经典右键菜单中显示彩色边框
+  $name: 边框颜色
+  $description: >-
+      需要 Windows 11 版本 ≥ 22000.xxx（21H2）
+- RuledPrograms:
+    - - target: "mspaint.exe"
+        $name: 进程
+        $description: >-
+         条目可以是进程名称或路径，例如
+          mspaint.exe
+          C:\Windows\System32\notepad.exe
+      - type: none
+        $name: 效果
+        $description: >-
+         SystemBackdrop 效果需要 Windows 11 版本 ≥ 22621.xxx（22H2）
+        $options:
+          - none: Default
+          - acrylicblur: Blur (AccentBlurBehind)
+          - acrylicsystem: Acrylic (SystemBackdrop)
+          - mica: Mica (SystemBackdrop)
+          - mica_tabbed: MicaAlt (SystemBackdrop)
+      - AccentBlurBehind: "00000000"
+        $name: AccentBlurBehind 背景虚化的颜色混合
+        $description: >-
+            将颜色与模糊后的背景进行混合
+            颜色使用十六进制 ARGB 格式表示，例如 0F000000
+      - ImmersiveDarkTitle: FALSE
+        $name: 自动切换深色模式标题栏（监听型）
+        $description: >-
+            正常来讲,一个新打开的应用会自行匹配深色模式标题栏,但像是explorer这种只打开新窗口而不重新启动的应用只能使用监听模式了
+      - ExtendFrame: FALSE
+        $name: 将效果扩展到整个窗口
+        $description: >-
+          使用 DwmExtendFrameIntoClientArea 将效果扩展到整个窗口背景
+      - CornerOption: default
+        $name: 窗口角类型
+        $description: >-
+             指定窗口的圆角偏好设置
+            需要 Windows 11 版本 ≥ 22000.xxx（21H2）
+        $options: 
+        - default: Default
+        - notrounded: 无圆角
+        - smallround: win11 圆角
+      - RainbowSpeed: 1
+        $name: 彩虹速度
+        $description:  调整彩虹颜色的刷新速度（取值范围 1 到 100）
+      - TitlebarColor:
+          - ColorTitlebar: FALSE
+            $name: 开启
+          - RainbowTitlebar: FALSE
+            $name: 彩虹标题栏
+            $description: 启用窗口标题栏的彩虹效果
+          - titlerbarstyles_active: "FF0000"
+            $name: 聚焦窗口颜色
+            $description: >-
+             以十六进制 RGB 格式表示的颜色，例如红色 = FF0000
+              SystemAccentColor = 2
+          - titlerbarstyles_inactive: "00FFFF"
+            $name: 未聚焦窗口颜色
+            $description: >-
+             以十六进制 RGB 格式表示的颜色，例如红色 = FF0000
+              SystemAccentColor = 2
+        $name: 标题栏颜色
+        $description: 需要 Windows 11 版本 ≥ 22000.xxx（21H2），此设置将覆盖效果设置
+      - TitlebarTextColor:
+          - ColorTitlebarText: FALSE
+            $name: 开启
+          - RainbowTextColor: FALSE
+            $name: 彩虹标题栏文本颜色
+            $description: 启用窗口标题栏文字的彩虹效果
+          - titlerbarcolorstyles_active: "FF0000"
+            $name: 聚焦窗口颜色
+            $description: >-
+             以十六进制 RGB 格式表示的颜色，例如红色 = FF0000
+              Default = 1
+              SystemAccentColor = 2
+          - titlerbarcolorstyles_inactive: "00FFFF"
+            $name: 未聚焦窗口颜色
+            $description: >-
+             以十六进制 RGB 格式表示的颜色，例如红色 = FF0000
+              Default = 1
+              SystemAccentColor = 2
+        $name: 彩虹标题栏文本颜色
+        $description: >-
+            需要 Windows 11 版本 ≥ 22000.xxx（21H2）。
+            注意：此设置仅影响传统 Win32 窗口。由于在 Windows 11 22H2 中，文件资源管理器的标题栏文字渲染方式已改为使用 DirectWrite API，因此要修改文件资源管理器标题栏的文字颜色，请使用 Windhawk 的 File Explorer Styler 模块
+      - BorderColor:
+          - ColorBorder: FALSE
+            $name: 开启
+          - RainbowBorder: FALSE
+            $name: 彩虹边框
+            $description: 启用窗口边框的彩虹效果
+          - borderstyles_active: "FF0000"
+            $name: 聚焦窗口颜色
+            $description: >-
+             以十六进制 RGB 格式表示的颜色，例如红色 = FF0000
+              Transparent = 0
+              Default = 1
+              SystemAccentColor = 2
+          - borderstyles_inactive: "00FFFF"
+            $name: 未聚焦窗口颜色
+            $description: >-
+             以十六进制 RGB 格式表示的颜色，例如红色 = FF0000
+              Transparent = 0
+              Default = 1
+              SystemAccentColor = 2
+        $name: 边框颜色
+        $description: >-
+           需要 Windows 11 版本 ≥ 22000.xxx（21H2）
+  $name: 进程规则
+  $description: >-
+      为每个指定的进程添加规则
