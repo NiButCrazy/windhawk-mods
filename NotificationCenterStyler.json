@@ -15,7 +15,7 @@
   "controlStyles[4].target": "ControlCenter.PaginatedToggleButton > ContentPresenter#ContentPresenter@CommonStates",
   "controlStyles[4].styles[0]": "Background@Normal:= $CommonBgBrush2",
   "controlStyles[4].styles[1]": "Background@Checked:=$Accent",
-  "styleConstants[4]": "Accent = <WindhawkBlur BlurAmount=\"10\" TintColor=\"{ThemeResource SystemAccentColor}\"  TintOpacity=\".9\"/>",
+  "styleConstants[4]": "Accent =<WindhawkBlur BlurAmount=\"10\" TintColor=\"{ThemeResource SystemFillColorAttentionBrush}\"  TintOpacity=\".9\"/>",
   "styleConstants[5]": "CommonBgBrush2=<WindhawkBlur BlurAmount=\"5\" TintColor=\"{ThemeResource SystemChromeHighColor}\"  TintOpacity=\".2\"/>",
   "controlStyles[4].styles[2]": "BorderBrush:=$ElementBorderBrush",
   "styleConstants[6]": "ElementBorderBrush=<LinearGradientBrush StartPoint=\"0,0\" EndPoint=\"0,1\"><GradientStop Color=\"#50808080\" Offset=\"1\" /><GradientStop Color=\"#50606060\" Offset=\"0.15\" /></LinearGradientBrush>",
@@ -30,7 +30,7 @@
   "controlStyles[8].target": "ControlCenter.PaginatedToggleButton[AutomationProperties.AutomationId=Microsoft.QuickAction.WiFi] > ContentPresenter ",
   "controlStyles[8].styles[0]": "CornerRadius=12,0,0,12",
   "controlStyles[4].styles[4]": "Background@CheckedPointerOver:=$accentColor",
-  "styleConstants[8]": "accentColor=<WindhawkBlur BlurAmount=\"10\" TintColor=\"{ThemeResource SystemAccentColorDark1}\"  TintOpacity=\".9\"/>",
+  "styleConstants[8]": "accentColor=<WindhawkBlur BlurAmount=\"10\" TintColor=\"{ThemeResource SystemFillColorAttentionBrush}\"  TintOpacity=\"1\"/>",
   "controlStyles[9].target": "Windows.UI.Xaml.Controls.Primitives.Thumb#HorizontalThumb",
   "controlStyles[9].styles[0]": "Height=25",
   "controlStyles[10].target": "Windows.UI.Xaml.Controls.Primitives.Thumb#HorizontalThumb > Windows.UI.Xaml.Controls.Border",
@@ -65,7 +65,6 @@
   "styleConstants[12]": "BorderBrush=<LinearGradientBrush StartPoint=\"0,0\" EndPoint=\"0,1\"><GradientStop Color=\"#50808080\" Offset=\"0.0\" /><GradientStop Color=\"#50404040\" Offset=\"0.25\" /><GradientStop Color=\"#50808080\" Offset=\"1\" /></LinearGradientBrush>",
   "controlStyles[15].target": "ToolTip > ContentPresenter#LayoutRoot",
   "controlStyles[15].styles[0]": "Background:=$CommonBgBrush",
-  "themeResourceVariables[0]": "",
   "controlStyles[9].styles[1]": "Width=40",
   "controlStyles[9].styles[2]": "Margin=0",
   "controlStyles[9].styles[3]": "Visibility=Visible",
@@ -73,5 +72,9 @@
   "controlStyles[16].styles[0]": "MinHeight=210",
   "controlStyles[17].target": "ControlCenter.MediaTransportControls#MediaTransportControls > Grid",
   "controlStyles[17].styles[0]": "MinHeight=180",
-  "controlStyles[17].styles[1]": "Background:=$CommonBgBrush"
+  "controlStyles[17].styles[1]": "Background:=$CommonBgBrush",
+  "controlStyles[4].styles[5]": "Background@CheckedPressed:=$accentColor2",
+  "styleConstants[13]": "accentColor2=<WindhawkBlur BlurAmount=\"10\" TintColor=\"{ThemeResource SystemFillColorAttentionBrush}\"  TintOpacity=\".8\"/>",
+  "styleConstants[14]": "accentColor3=<WindhawkBlur BlurAmount=\"10\" TintColor=\"{ThemeResource SystemChromeHighColor}\"  TintOpacity=\".5\"/>",
+  "controlStyles[4].styles[6]": "Background@PointerOver:=$accentColor3"
 }
