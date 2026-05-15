@@ -39,7 +39,7 @@
   "controlStyles[11].styles[2]": "CornerRadius=30",
   "controlStyles[11].styles[3]": "BorderThickness=5",
   "controlStyles[11].styles[4]": "Margin=-7",
-  "controlStyles[11].styles[5]": "Background@PointerOver:=<SolidColorBrush Color=\"{ThemeResource SystemChromeAltHighColor}\" Opacity=\".3\" />",
+  "controlStyles[11].styles[5]": "BorderBrush@PointerOver:=<AcrylicBrush TintColor=\"{ThemeResource SystemAccentColor}\" FallbackColor=\"{ThemeResource SystemAccentColor}\" TintOpacity=\".8\" TintLuminosityOpacity=\".5\" Opacity=\"1\"/>",
   "controlStyles[12].target": "StartDocked.NavigationPaneButton#UserTileButton > Grid > Border#BackgroundBorder",
   "controlStyles[12].styles[0]": "Background:=<AcrylicBrush TintColor=\"{ThemeResource CardStrokeColorDefaultSolid}\" FallbackColor=\"{ThemeResource CardStrokeColorDefaultSolid}\" TintOpacity=\"0\" TintLuminosityOpacity=\".5\" Opacity=\"1\"/>",
   "controlStyles[12].styles[1]": "CornerRadius=18",
