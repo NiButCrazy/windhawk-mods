@@ -1,15 +1,15 @@
 {
   "theme": "TranslucentTaskbar",
-  "controlStyles[0].target": "Taskbar.TaskbarBackground#HoverFlyoutBackgroundControl > Grid > Rectangle#BackgroundFill",
-  "controlStyles[0].styles[0]": "Fill=$CommonBgBrush2",
   "styleConstants[0]": "CommonBgBrush2=<WindhawkBlur BlurAmount=\"10\" TintColor=\"{ThemeResource SystemChromeMediumHighColor}\"  TintOpacity=\".6\"/>",
-  "resourceVariables[0].variableKey": "",
-  "resourceVariables[0].value": "",
-  "controlStyles[1].target": "Border#OverflowFlyoutBackgroundBorder",
-  "controlStyles[1].styles[0]": "Background=$CommonBgBrush3",
   "styleConstants[1]": "CommonBgBrush3=<WindhawkBlur BlurAmount=\"10\" TintColor=\"{ThemeResource SystemChromeHighColor}\"  TintOpacity=\".1\"/>",
-  "controlStyles[2].target": "MenuFlyoutPresenter > Border",
-  "controlStyles[2].styles[0]": "Background=$CommonBgBrush4",
   "styleConstants[2]": "test=<WindhawkBlur BlurAmount=\"10\" TintColor=\"#FF0000\"  TintOpacity=\"1\"/>",
-  "styleConstants[3]": "CommonBgBrush4=<WindhawkBlur BlurAmount=\"18\" TintColor=\"{ThemeResource SystemChromeMediumHighColor}\"  TintOpacity=\".3\"/>"
+  "styleConstants[3]": "CommonBgBrush4=<WindhawkBlur BlurAmount=\"18\" TintColor=\"{ThemeResource SystemChromeMediumHighColor}\"  TintOpacity=\".3\"/>",
+  "controlStyles[0].target": "Taskbar.TaskbarBackground#HoverFlyoutBackgroundControl > Grid > Rectangle#BackgroundFill",
+  "controlStyles[0].styles[0]": "Fill:=$CommonBgBrush2",
+  "controlStyles[1].target": "Border#OverflowFlyoutBackgroundBorder",
+  "controlStyles[1].styles[0]": "Background:=$CommonBgBrush3",
+  "controlStyles[2].target": "MenuFlyoutPresenter > Border",
+  "controlStyles[2].styles[0]": "Background:=$CommonBgBrush4",
+  "themeResourceVariables[0]": "",
+  "xamlDiagnosticsHandling": ""
 }
