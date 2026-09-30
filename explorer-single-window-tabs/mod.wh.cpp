@@ -47,6 +47,54 @@ struct RedirectInfo {
 };
 
 // ---------------------------------------------------------------------------
+// Windows created by a redirect that is still in flight.  They are made
+// transparent but deliberately keep WS_VISIBLE (the shell only registers
+// visible windows in IShellWindows), so they look like a normal Explorer
+// window to FindExistingExplorer and must be excluded from it.
+// ---------------------------------------------------------------------------
+static CRITICAL_SECTION g_phantomLock;
+static std::vector<HWND> g_phantomWindows;
+
+static bool IsPhantomWindow(HWND hwnd) {
+    bool found = false;
+    EnterCriticalSection(&g_phantomLock);
+    for (auto h : g_phantomWindows) {
+        if (h == hwnd) {
+            found = true;
+            break;
+        }
+    }
+    LeaveCriticalSection(&g_phantomLock);
+    return found;
+}
+
+static void AddPhantomWindow(HWND hwnd) {
+    EnterCriticalSection(&g_phantomLock);
+    g_phantomWindows.push_back(hwnd);
+    LeaveCriticalSection(&g_phantomLock);
+}
+
+static void RemovePhantomWindow(HWND hwnd) {
+    EnterCriticalSection(&g_phantomLock);
+    for (size_t i = 0; i < g_phantomWindows.size(); i++) {
+        if (g_phantomWindows[i] == hwnd) {
+            g_phantomWindows.erase(g_phantomWindows.begin() + i);
+            break;
+        }
+    }
+    LeaveCriticalSection(&g_phantomLock);
+}
+
+// Keeps a phantom window listed for as long as its redirect is running.
+struct PhantomGuard {
+    HWND hwnd;
+    ~PhantomGuard() {
+        if (hwnd)
+            RemovePhantomWindow(hwnd);
+    }
+};
+
+// ---------------------------------------------------------------------------
 // Check whether a path is a normal folder that can be opened as a tab.
 // Returns false for Control Panel and other special shell locations.
 // ---------------------------------------------------------------------------
@@ -113,7 +161,8 @@ static HWND FindExistingExplorer(HWND exclude) {
             HWND hwnd =
                 reinterpret_cast<HWND>(static_cast<ULONG_PTR>(hwndPtr));
 
-            if (hwnd && hwnd != exclude && IsWindowVisible(hwnd)) {
+            if (hwnd && hwnd != exclude && IsWindowVisible(hwnd) &&
+                !IsPhantomWindow(hwnd)) {
                 // Get the window's path to verify it's real File Explorer
                 std::wstring path;
 
@@ -305,20 +354,29 @@ static int GetShellWindowCount() {
 }
 
 // ---------------------------------------------------------------------------
-// COM: Navigate the most recently added tab to the target path
+// Per-tab identity.
+//
+// Every tab of a File Explorer window is a separate IShellWindows entry, but
+// IWebBrowser2::get_HWND() reports the frame (CabinetWClass) handle for all of
+// them, so tabs cannot be told apart by that handle.  The tab's own window is
+// only reachable through IShellBrowser::GetWindow(); it is unique per tab and
+// stays valid across navigation, which makes it the reliable way to identify
+// the tab a redirect has just created.
 // ---------------------------------------------------------------------------
-static bool NavigateNewTab(HWND primaryHwnd, const std::wstring& path,
-                           int prevCount) {
-    IShellWindows* pSW = nullptr;
-    if (FAILED(CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_ALL,
-                                IID_PPV_ARGS(&pSW))))
-        return false;
+struct ShellEntry {
+    long          index;    // position in the IShellWindows collection
+    HWND          tabWnd;   // per-tab window, may be nullptr
+    IWebBrowser2* browser;  // holds a reference; release with ReleaseEntries()
+};
+
+static std::vector<ShellEntry> GetWindowTabs(IShellWindows* pSW, HWND frame) {
+    std::vector<ShellEntry> tabs;
 
     long count = 0;
-    pSW->get_Count(&count);
+    if (FAILED(pSW->get_Count(&count)))
+        return tabs;
 
-    bool success = false;
-    for (long i = count - 1; i >= 0; i--) {
+    for (long i = 0; i < count; i++) {
         VARIANT idx;
         VariantInit(&idx);
         idx.vt   = VT_I4;
@@ -334,70 +392,202 @@ static bool NavigateNewTab(HWND primaryHwnd, const std::wstring& path,
             pBrowser->get_HWND(&hwndPtr);
 
             if (reinterpret_cast<HWND>(static_cast<ULONG_PTR>(hwndPtr)) ==
-                primaryHwnd) {
-                // Only navigate empty/home tabs to avoid clobbering
-                BSTR url = nullptr;
-                pBrowser->get_LocationURL(&url);
-                bool isEmptyOrNew =
-                    (!url || wcslen(url) == 0 || i >= prevCount);
-                if (url) SysFreeString(url);
-
-                if (isEmptyOrNew) {
-                    VARIANT target;
-                    VariantInit(&target);
-                    VARIANT empty;
-                    VariantInit(&empty);
-                    HRESULT hr = E_FAIL;
-
-                    // CLSID paths (e.g. `::{...}`) need PIDL-based navigation
-                    // because Navigate2 with a BSTR doesn't handle them.
-                    if (path.size() >= 3 && path[0] == L':' &&
-                        path[1] == L':' && path[2] == L'{') {
-                        PIDLIST_ABSOLUTE pidl = nullptr;
-                        if (SUCCEEDED(SHParseDisplayName(path.c_str(),
-                                nullptr, &pidl, 0, nullptr)) && pidl) {
-                            UINT pidlSize = ILGetSize(pidl);
-                            SAFEARRAY* sa = SafeArrayCreateVector(
-                                VT_UI1, 0, pidlSize);
-                            if (sa) {
-                                void* data = nullptr;
-                                SafeArrayAccessData(sa, &data);
-                                memcpy(data, pidl, pidlSize);
-                                SafeArrayUnaccessData(sa);
-
-                                target.vt     = VT_ARRAY | VT_UI1;
-                                target.parray = sa;
-                                hr = pBrowser->Navigate2(&target, &empty,
-                                                          &empty, &empty,
-                                                          &empty);
-                                SafeArrayDestroy(sa);
-                            }
-                            CoTaskMemFree(pidl);
-                        }
-                    } else {
-                        // Regular filesystem path — BSTR works fine
-                        target.vt      = VT_BSTR;
-                        target.bstrVal = SysAllocString(path.c_str());
-                        hr = pBrowser->Navigate2(&target, &empty,
-                                                  &empty, &empty, &empty);
-                        SysFreeString(target.bstrVal);
+                frame) {
+                HWND tabWnd = nullptr;
+                IServiceProvider* pSP = nullptr;
+                if (SUCCEEDED(pDisp->QueryInterface(IID_PPV_ARGS(&pSP)))) {
+                    IShellBrowser* pSB = nullptr;
+                    if (SUCCEEDED(pSP->QueryService(
+                            SID_STopLevelBrowser, IID_PPV_ARGS(&pSB)))) {
+                        pSB->GetWindow(&tabWnd);
+                        pSB->Release();
                     }
-
-                    Wh_Log(L"Navigate2 [%d] hr=0x%08X", static_cast<int>(i),
-                           hr);
-                    success = SUCCEEDED(hr);
-
-                    pBrowser->Release();
-                    pDisp->Release();
-                    break;
+                    pSP->Release();
                 }
+
+                ShellEntry entry = {i, tabWnd, pBrowser};  // keeps the ref
+                tabs.push_back(entry);
+                pDisp->Release();
+                continue;
             }
             pBrowser->Release();
         }
         pDisp->Release();
     }
+    return tabs;
+}
+
+static std::vector<ShellEntry> GetWindowTabs(HWND frame) {
+    std::vector<ShellEntry> tabs;
+
+    IShellWindows* pSW = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_ALL,
+                                IID_PPV_ARGS(&pSW))))
+        return tabs;
+
+    tabs = GetWindowTabs(pSW, frame);
     pSW->Release();
-    return success;
+    return tabs;
+}
+
+static void ReleaseEntries(std::vector<ShellEntry>& entries) {
+    for (auto& e : entries) {
+        if (e.browser)
+            e.browser->Release();
+    }
+    entries.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Wait for a tab of 'frame' that was not present in 'beforeTabs' to appear and
+// return it (with a reference to its browser).  Polls until timeoutMs elapses.
+// ---------------------------------------------------------------------------
+static bool FindNewTab(HWND frame, const std::vector<HWND>& beforeTabs,
+                       ShellEntry& result, int timeoutMs) {
+    IShellWindows* pSW = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_ALL,
+                                IID_PPV_ARGS(&pSW))))
+        return false;
+
+    bool found = false;
+    DWORD deadline = GetTickCount() + static_cast<DWORD>(timeoutMs);
+
+    for (;;) {
+        std::vector<ShellEntry> entries = GetWindowTabs(pSW, frame);
+
+        // Only act when exactly one tab is new.  If the set is ambiguous
+        // (a tab opened concurrently, or an entry is momentarily missing
+        // while the shell reorders its tab windows) guessing would risk
+        // navigating the wrong tab, so keep polling instead.
+        ShellEntry candidate = {0, nullptr, nullptr};
+        int newCount = 0;
+
+        for (auto& e : entries) {
+            if (!e.tabWnd)
+                continue;
+
+            bool known = false;
+            for (auto h : beforeTabs) {
+                if (h == e.tabWnd) {
+                    known = true;
+                    break;
+                }
+            }
+            if (!known) {
+                newCount++;
+                if (newCount == 1) {
+                    candidate = e;
+                    e.browser = nullptr;  // transfer the reference
+                }
+            }
+        }
+
+        if (newCount > 1) {
+            if (candidate.browser)
+                candidate.browser->Release();
+            candidate = {0, nullptr, nullptr};
+        }
+        ReleaseEntries(entries);
+
+        if (candidate.browser) {
+            result = candidate;
+            found = true;
+            break;
+        }
+
+        if (GetTickCount() >= deadline)
+            break;
+        Sleep(15);
+    }
+
+    pSW->Release();
+    return found;
+}
+
+// ---------------------------------------------------------------------------
+// COM: Navigate one specific tab to the target path.
+// ---------------------------------------------------------------------------
+static bool NavigateTab(const ShellEntry& entry, const std::wstring& path) {
+    IWebBrowser2* pBrowser = entry.browser;
+    if (!pBrowser)
+        return false;
+
+    VARIANT target;
+    VariantInit(&target);
+    VARIANT empty;
+    VariantInit(&empty);
+    HRESULT hr = E_FAIL;
+
+    // CLSID paths (e.g. `::{...}`) need PIDL-based navigation
+    // because Navigate2 with a BSTR doesn't handle them.
+    if (path.size() >= 3 && path[0] == L':' && path[1] == L':' &&
+        path[2] == L'{') {
+        PIDLIST_ABSOLUTE pidl = nullptr;
+        if (SUCCEEDED(SHParseDisplayName(path.c_str(), nullptr, &pidl, 0,
+                                         nullptr)) && pidl) {
+            UINT pidlSize = ILGetSize(pidl);
+            SAFEARRAY* sa = SafeArrayCreateVector(VT_UI1, 0, pidlSize);
+            if (sa) {
+                void* data = nullptr;
+                SafeArrayAccessData(sa, &data);
+                memcpy(data, pidl, pidlSize);
+                SafeArrayUnaccessData(sa);
+
+                target.vt     = VT_ARRAY | VT_UI1;
+                target.parray = sa;
+                hr = pBrowser->Navigate2(&target, &empty, &empty, &empty,
+                                          &empty);
+                SafeArrayDestroy(sa);
+            }
+            CoTaskMemFree(pidl);
+        }
+    } else {
+        // Regular filesystem path — BSTR works fine
+        target.vt      = VT_BSTR;
+        target.bstrVal = SysAllocString(path.c_str());
+        hr = pBrowser->Navigate2(&target, &empty, &empty, &empty, &empty);
+        SysFreeString(target.bstrVal);
+    }
+
+    Wh_Log(L"Navigate2 tab=0x%p hr=0x%08X", entry.tabWnd, hr);
+    return SUCCEEDED(hr);
+}
+
+// ---------------------------------------------------------------------------
+// Fallback: navigate the newest tab of 'primaryHwnd' using the collection
+// index heuristic.  Only used when the new tab could not be identified by its
+// own window handle (see FindNewTab) — the entry indices are not a reliable
+// way to tell tabs apart.
+// ---------------------------------------------------------------------------
+static bool NavigateNewTab(HWND primaryHwnd, const std::wstring& path,
+                           int prevCount) {
+    std::vector<ShellEntry> entries = GetWindowTabs(primaryHwnd);
+
+    bool navigated = false;
+    // Search back-to-front — newer tabs have higher indices
+    for (size_t k = entries.size(); k-- > 0;) {
+        ShellEntry& e = entries[k];
+        if (!e.browser)
+            continue;
+
+        bool isEmptyOrNew = (e.index >= prevCount);
+        if (!isEmptyOrNew) {
+            // Only navigate empty/home tabs to avoid clobbering
+            BSTR url = nullptr;
+            if (SUCCEEDED(e.browser->get_LocationURL(&url)) && url) {
+                isEmptyOrNew = (wcslen(url) == 0);
+                SysFreeString(url);
+            }
+        }
+
+        if (isEmptyOrNew) {
+            navigated = NavigateTab(e, path);
+            break;
+        }
+    }
+
+    ReleaseEntries(entries);
+    return navigated;
 }
 
 // ---------------------------------------------------------------------------
@@ -554,7 +744,7 @@ static std::vector<std::wstring> GetWindowSelectedItems(HWND targetHwnd) {
 static bool SelectItemsInNewTab(HWND primaryHwnd,
                                 const std::wstring& folderPath,
                                 const std::vector<std::wstring>& itemPaths,
-                                int prevCount) {
+                                HWND tabWnd) {
     if (itemPaths.empty())
         return true;  // Nothing to select — success
 
@@ -564,13 +754,6 @@ static bool SelectItemsInNewTab(HWND primaryHwnd,
                                   0, nullptr)) ||
         !pidlFolder)
         return false;
-
-    IShellWindows* pSW = nullptr;
-    if (FAILED(CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_ALL,
-                                IID_PPV_ARGS(&pSW)))) {
-        CoTaskMemFree(pidlFolder);
-        return false;
-    }
 
     // Build an array of child PIDLs (relative to pidlFolder) for the items
     // we want to select.  pidlItems keeps the absolute PIDLs alive; childPIDLs
@@ -595,7 +778,6 @@ static bool SelectItemsInNewTab(HWND primaryHwnd,
 
     if (childPIDLs.empty()) {
         CoTaskMemFree(pidlFolder);
-        pSW->Release();
         Wh_Log(L"No resolved child PIDLs — cannot select items");
         return false;
     }
@@ -608,96 +790,61 @@ static bool SelectItemsInNewTab(HWND primaryHwnd,
         if (attempt > 0)
             Sleep(30);
 
-        long count = 0;
-        if (FAILED(pSW->get_Count(&count)))
-            continue;
-
+        std::vector<ShellEntry> entries = GetWindowTabs(primaryHwnd);
         bool found = false;
 
-        // Search back-to-front — newest tabs are at higher indices
-        for (long i = count - 1; i >= 0 && !found; i--) {
-            VARIANT idx;
-            VariantInit(&idx);
-            idx.vt   = VT_I4;
-            idx.lVal = i;
-
-            IDispatch* pDisp = nullptr;
-            if (FAILED(pSW->Item(idx, &pDisp)) || !pDisp)
-                continue;
-
-            IWebBrowser2* pBrowser = nullptr;
-            if (SUCCEEDED(pDisp->QueryInterface(IID_PPV_ARGS(&pBrowser)))) {
-                SHANDLE_PTR hwndPtr = 0;
-                pBrowser->get_HWND(&hwndPtr);
-
-                if (reinterpret_cast<HWND>(static_cast<ULONG_PTR>(hwndPtr)) ==
-                    primaryHwnd) {
-                    // Check that this is a new tab (index >= prevCount)
-                    if (i < prevCount) {
-                        pBrowser->Release();
-                        pDisp->Release();
-                        continue;
-                    }
-
-                    // Verify the browser is done loading
-                    READYSTATE rs = READYSTATE_LOADING;
-                    pBrowser->get_ReadyState(&rs);
-                    if (rs != READYSTATE_COMPLETE) {
-                        pBrowser->Release();
-                        pDisp->Release();
-                        continue;  // Not ready yet, retry
-                    }
-
-                    // Get the shell view
-                    IServiceProvider* pSP = nullptr;
-                    if (SUCCEEDED(pDisp->QueryInterface(
-                            IID_PPV_ARGS(&pSP)))) {
-                        IShellBrowser* pSB = nullptr;
-                        if (SUCCEEDED(pSP->QueryService(
-                                SID_STopLevelBrowser,
-                                IID_PPV_ARGS(&pSB)))) {
-                            IShellView* pSV = nullptr;
-                            if (SUCCEEDED(pSB->QueryActiveShellView(
-                                    &pSV))) {
-                                IFolderView* pFV = nullptr;
-                                if (SUCCEEDED(pSV->QueryInterface(
-                                        IID_PPV_ARGS(&pFV)))) {
-                                    // Select all items at once
-                                    HRESULT hr =
-                                        pFV->SelectAndPositionItems(
-                                            static_cast<UINT>(
-                                                childPIDLs.size()),
-                                            childPIDLs.data(),
-                                            nullptr,  // POINT* apt
-                                            SVSI_SELECT |
-                                                SVSI_DESELECTOTHERS |
-                                                SVSI_FOCUSED |
-                                                SVSI_ENSUREVISIBLE);
-                                    if (SUCCEEDED(hr)) {
-                                        Wh_Log(L"Selected %zu items "
-                                               L"in new tab",
-                                               childPIDLs.size());
-                                        success = true;
-                                    } else {
-                                        Wh_Log(L"SelectAndPositionItems "
-                                               L"failed: 0x%08X",
-                                               hr);
-                                    }
-
-                                    pFV->Release();
-                                    found = true;  // Done with this tab
-                                }
-                                pSV->Release();
-                            }
-                            pSB->Release();
-                        }
-                        pSP->Release();
-                    }
+        for (auto& e : entries) {
+            if (!found && e.tabWnd == tabWnd && e.browser) {
+                // Verify the browser is done loading
+                READYSTATE rs = READYSTATE_LOADING;
+                e.browser->get_ReadyState(&rs);
+                if (rs != READYSTATE_COMPLETE) {
+                    continue;  // Not ready yet, retry
                 }
-                pBrowser->Release();
+
+                // Get the shell view
+                IServiceProvider* pSP = nullptr;
+                if (SUCCEEDED(e.browser->QueryInterface(
+                        IID_PPV_ARGS(&pSP)))) {
+                    IShellBrowser* pSB = nullptr;
+                    if (SUCCEEDED(pSP->QueryService(
+                            SID_STopLevelBrowser, IID_PPV_ARGS(&pSB)))) {
+                        IShellView* pSV = nullptr;
+                        if (SUCCEEDED(pSB->QueryActiveShellView(&pSV))) {
+                            IFolderView* pFV = nullptr;
+                            if (SUCCEEDED(pSV->QueryInterface(
+                                    IID_PPV_ARGS(&pFV)))) {
+                                // Select all items at once
+                                HRESULT hr = pFV->SelectAndPositionItems(
+                                    static_cast<UINT>(childPIDLs.size()),
+                                    childPIDLs.data(),
+                                    nullptr,  // POINT* apt
+                                    SVSI_SELECT | SVSI_DESELECTOTHERS |
+                                        SVSI_FOCUSED | SVSI_ENSUREVISIBLE);
+                                if (SUCCEEDED(hr)) {
+                                    Wh_Log(L"Selected %zu items "
+                                           L"in new tab",
+                                           childPIDLs.size());
+                                    success = true;
+                                } else {
+                                    Wh_Log(L"SelectAndPositionItems "
+                                           L"failed: 0x%08X",
+                                           hr);
+                                }
+
+                                pFV->Release();
+                                found = true;  // Done with this tab
+                            }
+                            pSV->Release();
+                        }
+                        pSB->Release();
+                    }
+                    pSP->Release();
+                }
             }
-            pDisp->Release();
         }
+
+        ReleaseEntries(entries);
 
         if (found)
             break;
@@ -706,7 +853,6 @@ static bool SelectItemsInNewTab(HWND primaryHwnd,
     for (auto pidl : pidlItems)
         CoTaskMemFree(pidl);
     CoTaskMemFree(pidlFolder);
-    pSW->Release();
     return success;
 }
 
@@ -718,6 +864,9 @@ static DWORD WINAPI RedirectThread(LPVOID param) {
     HWND  newWnd  = info->newWindow;
     HWND  primary = info->primaryWindow;
     delete info;
+
+    PhantomGuard phantomGuard;
+    phantomGuard.hwnd = newWnd;
 
     if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)))
         return 1;
@@ -768,8 +917,18 @@ static DWORD WINAPI RedirectThread(LPVOID param) {
         return 0;
     }
 
-    // Snapshot tab count before creating a new tab
-    int prevCount = GetShellWindowCount() - 1;
+    // Snapshot the window's tabs so the one created below can be identified
+    // by its own handle (see GetWindowTabs).  Collection indices cannot be
+    // used for that: they are shared with every other shell window.
+    std::vector<HWND> tabsBefore;
+    {
+        std::vector<ShellEntry> entries = GetWindowTabs(primary);
+        for (auto& e : entries) {
+            if (e.tabWnd)
+                tabsBefore.push_back(e.tabWnd);
+        }
+        ReleaseEntries(entries);
+    }
 
     // Close the duplicate window (already transparent via WS_EX_LAYERED)
     PostMessageW(newWnd, WM_CLOSE, 0, 0);
@@ -783,31 +942,47 @@ static DWORD WINAPI RedirectThread(LPVOID param) {
     }
     PostMessageW(shellTab, WM_COMMAND, CMD_NEW_TAB, 0);
 
-    // Phase 3: navigate the new tab (max ~100ms).
-    // Try immediately — PostMessage may already be processed.
+    // Phase 3: navigate the tab that was just created.  Navigating a tab's
+    // shell window also makes that tab the active one, so this both fills it
+    // and switches to it.
     bool navigated = false;
-    if (GetShellWindowCount() > prevCount)
-        navigated = NavigateNewTab(primary, path, prevCount);
+    ShellEntry newTab = {0, nullptr, nullptr};
 
-    if (!navigated) {
-        for (int wait = 0; wait < 15; wait++) {
-            Sleep(10);
-            if (GetShellWindowCount() > prevCount) {
-                navigated = NavigateNewTab(primary, path, prevCount);
-                break;
+    if (FindNewTab(primary, tabsBefore, newTab, 800)) {
+        Wh_Log(L"New tab identified: 0x%p", newTab.tabWnd);
+        navigated = NavigateTab(newTab, path);
+    } else {
+        // The new tab's handle could not be obtained — fall back to the old
+        // index-based guess.
+        Wh_Log(L"New tab not identified, using index heuristic");
+        int prevCount = GetShellWindowCount() - 1;
+
+        if (GetShellWindowCount() > prevCount)
+            navigated = NavigateNewTab(primary, path, prevCount);
+
+        if (!navigated) {
+            for (int wait = 0; wait < 15; wait++) {
+                Sleep(10);
+                if (GetShellWindowCount() > prevCount) {
+                    navigated = NavigateNewTab(primary, path, prevCount);
+                    break;
+                }
             }
         }
-    }
 
-    // Fallback: try navigating the last matching entry
-    if (!navigated)
-        navigated = NavigateNewTab(primary, path, 0);
+        // Fallback: try navigating the last matching entry
+        if (!navigated)
+            navigated = NavigateNewTab(primary, path, 0);
+    }
 
     // SHOpenFolderAndSelectItems: re-select the items in the new tab.
-    if (navigated && !selectedItems.empty()) {
+    if (navigated && newTab.tabWnd && !selectedItems.empty()) {
         Wh_Log(L"Re-applying selection of %zu items", selectedItems.size());
-        SelectItemsInNewTab(primary, path, selectedItems, prevCount);
+        SelectItemsInNewTab(primary, path, selectedItems, newTab.tabWnd);
     }
+
+    if (newTab.browser)
+        newTab.browser->Release();
 
     // Bring primary window to foreground
     if (IsIconic(primary))
@@ -880,6 +1055,7 @@ HWND WINAPI CreateWindowExW_Hook(DWORD dwExStyle, LPCWSTR lpClassName,
         SetLayeredWindowAttributes(hwnd, 0, 0, LWA_ALPHA);
 
         g_lastPrimaryWindow = hwnd;
+        AddPhantomWindow(hwnd);
 
         // Redirect — window is transparent, thread will close it
         auto* ri = new RedirectInfo{hwnd, existing};
@@ -912,6 +1088,8 @@ BOOL WINAPI ShowWindow_Hook(HWND hWnd, int nCmdShow) {
 // Mod lifecycle
 // ---------------------------------------------------------------------------
 BOOL Wh_ModInit() {
+    InitializeCriticalSection(&g_phantomLock);
+
     Wh_SetFunctionHook(reinterpret_cast<void*>(CreateWindowExW),
                         reinterpret_cast<void*>(CreateWindowExW_Hook),
                         reinterpret_cast<void**>(&CreateWindowExW_Original));
@@ -921,4 +1099,5 @@ BOOL Wh_ModInit() {
     return TRUE;
 }
 
+// Not deleting g_phantomLock here: a redirect thread may still be running.
 void Wh_ModUninit() {}
