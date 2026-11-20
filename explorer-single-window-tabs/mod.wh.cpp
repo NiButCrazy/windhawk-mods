@@ -2,7 +2,7 @@
 // @id              nbc-explorer-single-window-tabs
 // @name            Explorer 单窗口标签页
 // @description     把新的explorer窗口重定向至新窗口
-// @version         0.8
+// @version         0.10
 // @author          Ni But Crazy
 // @github          https://github.com/almas-cp
 // @homepage        https://github.com/almas-cp
@@ -20,6 +20,7 @@
 #include <shobjidl.h>
 #include <exdisp.h>
 #include <shlwapi.h>
+#include <new>
 #include <string>
 #include <vector>
 
@@ -43,7 +44,6 @@ static ShowWindow_t ShowWindow_Original;
 
 struct RedirectInfo {
     HWND newWindow;
-    HWND primaryWindow;
 };
 
 // ---------------------------------------------------------------------------
@@ -241,12 +241,10 @@ static HWND FindExistingExplorer(HWND exclude) {
 // ---------------------------------------------------------------------------
 // COM: Extract navigation path from an Explorer window by HWND
 // ---------------------------------------------------------------------------
-static std::wstring GetExplorerWindowPath(HWND targetHwnd) {
+static std::wstring GetExplorerWindowPath(IShellWindows* pSW,
+                                          HWND targetHwnd) {
     std::wstring result;
-
-    IShellWindows* pSW = nullptr;
-    if (FAILED(CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_ALL,
-                                IID_PPV_ARGS(&pSW))))
+    if (!pSW)
         return result;
 
     long count = 0;
@@ -335,22 +333,7 @@ static std::wstring GetExplorerWindowPath(HWND targetHwnd) {
         }
         pDisp->Release();
     }
-    pSW->Release();
     return result;
-}
-
-// ---------------------------------------------------------------------------
-// COM: Count current IShellWindows entries
-// ---------------------------------------------------------------------------
-static int GetShellWindowCount() {
-    IShellWindows* pSW = nullptr;
-    if (FAILED(CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_ALL,
-                                IID_PPV_ARGS(&pSW))))
-        return 0;
-    long count = 0;
-    pSW->get_Count(&count);
-    pSW->Release();
-    return static_cast<int>(count);
 }
 
 // ---------------------------------------------------------------------------
@@ -364,7 +347,6 @@ static int GetShellWindowCount() {
 // the tab a redirect has just created.
 // ---------------------------------------------------------------------------
 struct ShellEntry {
-    long          index;    // position in the IShellWindows collection
     HWND          tabWnd;   // per-tab window, may be nullptr
     IWebBrowser2* browser;  // holds a reference; release with ReleaseEntries()
 };
@@ -405,7 +387,7 @@ static std::vector<ShellEntry> GetWindowTabs(IShellWindows* pSW, HWND frame) {
                     pSP->Release();
                 }
 
-                ShellEntry entry = {i, tabWnd, pBrowser};  // keeps the ref
+                ShellEntry entry = {tabWnd, pBrowser};  // keeps the ref
                 tabs.push_back(entry);
                 pDisp->Release();
                 continue;
@@ -438,6 +420,26 @@ static void ReleaseEntries(std::vector<ShellEntry>& entries) {
     entries.clear();
 }
 
+// Snapshot tab HWNDs without COM.  Every tab is a direct ShellTabWindowClass
+// child of the CabinetWClass frame, so handle-set membership (all FindNewTab
+// needs) doesn't require an IShellWindows enumeration.
+static std::vector<HWND> SnapshotTabWindows(HWND frame) {
+    std::vector<HWND> tabs;
+    if (!frame || !IsWindow(frame))
+        return tabs;
+
+    HWND child = GetWindow(frame, GW_CHILD);
+    while (child) {
+        WCHAR className[64];
+        if (GetClassNameW(child, className, ARRAYSIZE(className)) &&
+            wcscmp(className, WC_SHELLTAB) == 0) {
+            tabs.push_back(child);
+        }
+        child = GetWindow(child, GW_HWNDNEXT);
+    }
+    return tabs;
+}
+
 // ---------------------------------------------------------------------------
 // Wait for a tab of 'frame' that was not present in 'beforeTabs' to appear and
 // return it (with a reference to its browser).  Polls until timeoutMs elapses.
@@ -459,7 +461,7 @@ static bool FindNewTab(HWND frame, const std::vector<HWND>& beforeTabs,
         // (a tab opened concurrently, or an entry is momentarily missing
         // while the shell reorders its tab windows) guessing would risk
         // navigating the wrong tab, so keep polling instead.
-        ShellEntry candidate = {0, nullptr, nullptr};
+        ShellEntry candidate = {nullptr, nullptr};
         int newCount = 0;
 
         for (auto& e : entries) {
@@ -485,7 +487,7 @@ static bool FindNewTab(HWND frame, const std::vector<HWND>& beforeTabs,
         if (newCount > 1) {
             if (candidate.browser)
                 candidate.browser->Release();
-            candidate = {0, nullptr, nullptr};
+            candidate = {nullptr, nullptr};
         }
         ReleaseEntries(entries);
 
@@ -551,43 +553,6 @@ static bool NavigateTab(const ShellEntry& entry, const std::wstring& path) {
 
     Wh_Log(L"Navigate2 tab=0x%p hr=0x%08X", entry.tabWnd, hr);
     return SUCCEEDED(hr);
-}
-
-// ---------------------------------------------------------------------------
-// Fallback: navigate the newest tab of 'primaryHwnd' using the collection
-// index heuristic.  Only used when the new tab could not be identified by its
-// own window handle (see FindNewTab) — the entry indices are not a reliable
-// way to tell tabs apart.
-// ---------------------------------------------------------------------------
-static bool NavigateNewTab(HWND primaryHwnd, const std::wstring& path,
-                           int prevCount) {
-    std::vector<ShellEntry> entries = GetWindowTabs(primaryHwnd);
-
-    bool navigated = false;
-    // Search back-to-front — newer tabs have higher indices
-    for (size_t k = entries.size(); k-- > 0;) {
-        ShellEntry& e = entries[k];
-        if (!e.browser)
-            continue;
-
-        bool isEmptyOrNew = (e.index >= prevCount);
-        if (!isEmptyOrNew) {
-            // Only navigate empty/home tabs to avoid clobbering
-            BSTR url = nullptr;
-            if (SUCCEEDED(e.browser->get_LocationURL(&url)) && url) {
-                isEmptyOrNew = (wcslen(url) == 0);
-                SysFreeString(url);
-            }
-        }
-
-        if (isEmptyOrNew) {
-            navigated = NavigateTab(e, path);
-            break;
-        }
-    }
-
-    ReleaseEntries(entries);
-    return navigated;
 }
 
 // ---------------------------------------------------------------------------
@@ -857,53 +822,57 @@ static bool SelectItemsInNewTab(HWND primaryHwnd,
 }
 
 // ---------------------------------------------------------------------------
-// Redirect thread: close new window → create tab → navigate
+// Redirect thread: read path/selection → close duplicate → create/navigate tab
 // ---------------------------------------------------------------------------
 static DWORD WINAPI RedirectThread(LPVOID param) {
     auto* info    = static_cast<RedirectInfo*>(param);
     HWND  newWnd  = info->newWindow;
-    HWND  primary = info->primaryWindow;
+    HWND  primary = nullptr;
     delete info;
 
     PhantomGuard phantomGuard;
     phantomGuard.hwnd = newWnd;
 
+    ULONGLONG threadStart = GetTickCount64();
+
     if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)))
         return 1;
 
-    // Phase 1: extract path (max ~100ms).  Check immediately first —
-    // by the time the thread starts the window has usually navigated.
-    std::wstring path = GetExplorerWindowPath(newWnd);
-    if (path.empty()) {
-        for (int attempt = 0; attempt < 20 && IsWindow(newWnd); attempt++) {
-            Sleep(5);
-            path = GetExplorerWindowPath(newWnd);
-            if (!path.empty()) break;
-        }
-    }
-
-    // Phase 2: SHOpenFolderAndSelectItems selection detection.
-    // Check immediately; only poll if the window is still loading.
-    std::vector<std::wstring> selectedItems;
-    if (!path.empty()) {
-        selectedItems = GetWindowSelectedItems(newWnd);
-        if (selectedItems.empty() && !IsExplorerReady(newWnd)) {
-            for (int attempt = 0; attempt < 15 && IsWindow(newWnd);
+    // Phase 1: extract path (max ~100ms).  Reuse one IShellWindows instance
+    // for the whole poll loop; the old code re-created it on every retry.
+    // Check immediately first — by the time the thread starts the window has
+    // usually navigated.
+    std::wstring path;
+    IShellWindows* pathShellWindows = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_ALL,
+                                   IID_PPV_ARGS(&pathShellWindows))) &&
+        pathShellWindows) {
+        path = GetExplorerWindowPath(pathShellWindows, newWnd);
+        if (path.empty()) {
+            for (int attempt = 0;
+                 attempt < 20 && IsWindow(newWnd);
                  attempt++) {
-                Sleep(10);
-                selectedItems = GetWindowSelectedItems(newWnd);
-                if (!selectedItems.empty()) break;
-                if (IsExplorerReady(newWnd)) break;
+                Sleep(5);
+                path = GetExplorerWindowPath(pathShellWindows, newWnd);
+                if (!path.empty())
+                    break;
             }
         }
+        pathShellWindows->Release();
     }
+    ULONGLONG pathDone = GetTickCount64();
 
-    // Re-verify primary is still alive
+    // The hook no longer blocks the Explorer UI thread on IShellWindows;
+    // resolve the destination window here instead.
     if (!IsWindow(primary))
         primary = FindExistingExplorer(newWnd);
+    ULONGLONG primaryDone = GetTickCount64();
 
     if (path.empty() || !primary || !IsWindow(primary) ||
         newWnd == primary) {
+        Wh_Log(L"[v1-timing] abort path=%llu primary=%llu",
+               static_cast<unsigned long long>(pathDone - threadStart),
+               static_cast<unsigned long long>(primaryDone - pathDone));
         AbortRedirect(newWnd);
         CoUninitialize();
         return 0;
@@ -917,74 +886,92 @@ static DWORD WINAPI RedirectThread(LPVOID param) {
         return 0;
     }
 
-    // Snapshot the window's tabs so the one created below can be identified
-    // by its own handle (see GetWindowTabs).  Collection indices cannot be
-    // used for that: they are shared with every other shell window.
-    std::vector<HWND> tabsBefore;
-    {
-        std::vector<ShellEntry> entries = GetWindowTabs(primary);
-        for (auto& e : entries) {
-            if (e.tabWnd)
-                tabsBefore.push_back(e.tabWnd);
+    // Phase 2: read the SHOpenFolderAndSelectItems selection while the
+    // duplicate window is still alive.  It must be read before closing the
+    // duplicate; applying it to the new tab happens after navigation.
+    ULONGLONG selectionStart = GetTickCount64();
+    std::vector<std::wstring> selectedItems = GetWindowSelectedItems(newWnd);
+    if (selectedItems.empty() && !IsExplorerReady(newWnd)) {
+        for (int attempt = 0; attempt < 15 && IsWindow(newWnd); attempt++) {
+            Sleep(10);
+            selectedItems = GetWindowSelectedItems(newWnd);
+            if (!selectedItems.empty()) break;
+            if (IsExplorerReady(newWnd)) break;
         }
-        ReleaseEntries(entries);
     }
+    ULONGLONG selectionDone = GetTickCount64();
 
-    // Close the duplicate window (already transparent via WS_EX_LAYERED)
-    PostMessageW(newWnd, WM_CLOSE, 0, 0);
-
-    // Create a new tab via internal WM_COMMAND
+    // Find a tab window to send the command to before closing the duplicate,
+    // so a missing ShellTabWindowClass can still restore the original window.
     HWND shellTab = FindWindowExW(primary, nullptr, WC_SHELLTAB, nullptr);
     if (!shellTab) {
         Wh_Log(L"ShellTabWindowClass not found on primary %p", primary);
+        Wh_Log(L"[v1-timing] abort-no-shelltab path=%llu primary=%llu "
+               L"selection=%llu",
+               static_cast<unsigned long long>(pathDone - threadStart),
+               static_cast<unsigned long long>(primaryDone - pathDone),
+               static_cast<unsigned long long>(selectionDone -
+                                               selectionStart));
+        AbortRedirect(newWnd);
         CoUninitialize();
         return 0;
     }
-    PostMessageW(shellTab, WM_COMMAND, CMD_NEW_TAB, 0);
 
-    // Phase 3: navigate the tab that was just created.  Navigating a tab's
-    // shell window also makes that tab the active one, so this both fills it
-    // and switches to it.
+    // Close the duplicate before posting 0xA21B.  WM_CLOSE is queued first,
+    // so the Explorer UI thread can stop working on the duplicate's pending
+    // navigation instead of finishing it before handling the tab command.
+    // This is the main reason the tab used to appear late.  Trade-off: if tab
+    // creation/navigation fails there is no duplicate left to restore.
+    if (g_lastPrimaryWindow == newWnd)
+        g_lastPrimaryWindow = nullptr;
+    PostMessageW(newWnd, WM_CLOSE, 0, 0);
+
+    // Snapshot the window's tab HWNDs with a cheap Win32 child enumeration;
+    // the new tab is the one handle that isn't in this set.
+    std::vector<HWND> tabsBefore = SnapshotTabWindows(primary);
+    ULONGLONG snapshotDone = GetTickCount64();
+
+    // Create a new tab via internal WM_COMMAND.
+    PostMessageW(shellTab, WM_COMMAND, CMD_NEW_TAB, 0);
+    ULONGLONG postDone = GetTickCount64();
+
+    // Only operate on the tab that was just created.  If its handle cannot be
+    // identified, never fall back to navigating one of the user's existing
+    // tabs; leave the blank tab and log the failure (the duplicate has
+    // already been closed at this point).
     bool navigated = false;
-    ShellEntry newTab = {0, nullptr, nullptr};
+    ShellEntry newTab = {nullptr, nullptr};
 
     if (FindNewTab(primary, tabsBefore, newTab, 800)) {
         Wh_Log(L"New tab identified: 0x%p", newTab.tabWnd);
-        navigated = NavigateTab(newTab, path);
     } else {
-        // The new tab's handle could not be obtained — fall back to the old
-        // index-based guess.
-        Wh_Log(L"New tab not identified, using index heuristic");
-        int prevCount = GetShellWindowCount() - 1;
-
-        if (GetShellWindowCount() > prevCount)
-            navigated = NavigateNewTab(primary, path, prevCount);
-
-        if (!navigated) {
-            for (int wait = 0; wait < 15; wait++) {
-                Sleep(10);
-                if (GetShellWindowCount() > prevCount) {
-                    navigated = NavigateNewTab(primary, path, prevCount);
-                    break;
-                }
-            }
-        }
-
-        // Fallback: try navigating the last matching entry
-        if (!navigated)
-            navigated = NavigateNewTab(primary, path, 0);
+        Wh_Log(L"New tab not identified; refusing to touch existing tabs");
     }
-
-    // SHOpenFolderAndSelectItems: re-select the items in the new tab.
-    if (navigated && newTab.tabWnd && !selectedItems.empty()) {
-        Wh_Log(L"Re-applying selection of %zu items", selectedItems.size());
-        SelectItemsInNewTab(primary, path, selectedItems, newTab.tabWnd);
-    }
+    ULONGLONG foundDone = GetTickCount64();
 
     if (newTab.browser)
-        newTab.browser->Release();
+        navigated = NavigateTab(newTab, path);
+    ULONGLONG navDone = GetTickCount64();
 
-    // Bring primary window to foreground
+    if (!navigated) {
+        Wh_Log(L"[v1-timing] abort path=%llu primary=%llu selection=%llu "
+               L"snapshot=%llu post=%llu find=%llu navigate=%llu",
+               static_cast<unsigned long long>(pathDone - threadStart),
+               static_cast<unsigned long long>(primaryDone - pathDone),
+               static_cast<unsigned long long>(selectionDone -
+                                               selectionStart),
+               static_cast<unsigned long long>(snapshotDone - selectionDone),
+               static_cast<unsigned long long>(postDone - snapshotDone),
+               static_cast<unsigned long long>(foundDone - postDone),
+               static_cast<unsigned long long>(navDone - foundDone));
+        if (newTab.browser)
+            newTab.browser->Release();
+        CoUninitialize();
+        return 0;
+    }
+
+    // Bring the target window forward as soon as the tab is navigated; the
+    // selection can finish afterwards without delaying the visible result.
     if (IsIconic(primary))
         ShowWindow(primary, SW_RESTORE);
 
@@ -993,10 +980,61 @@ static DWORD WINAPI RedirectThread(LPVOID param) {
     AllowSetForegroundWindow(pid);
     SetForegroundWindow(primary);
 
+    ULONGLONG selectStart = GetTickCount64();
+    if (newTab.tabWnd && !selectedItems.empty()) {
+        Wh_Log(L"Re-applying selection of %zu items", selectedItems.size());
+        SelectItemsInNewTab(primary, path, selectedItems, newTab.tabWnd);
+    }
+    ULONGLONG selectDone = GetTickCount64();
+
+    if (newTab.browser)
+        newTab.browser->Release();
+
+    ULONGLONG totalDone = GetTickCount64();
+
+    Wh_Log(L"[v1-timing] path=%llu primary=%llu selection=%llu snapshot=%llu "
+           L"post=%llu find=%llu navigate=%llu select=%llu total=%llu",
+           static_cast<unsigned long long>(pathDone - threadStart),
+           static_cast<unsigned long long>(primaryDone - pathDone),
+           static_cast<unsigned long long>(selectionDone - selectionStart),
+           static_cast<unsigned long long>(snapshotDone - selectionDone),
+           static_cast<unsigned long long>(postDone - snapshotDone),
+           static_cast<unsigned long long>(foundDone - postDone),
+           static_cast<unsigned long long>(navDone - foundDone),
+           static_cast<unsigned long long>(selectDone - selectStart),
+           static_cast<unsigned long long>(totalDone - threadStart));
     Wh_Log(L"%s → %s", navigated ? L"Redirected" : L"Failed", path.c_str());
 
     CoUninitialize();
     return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Cheap Win32-only check used by CreateWindowExW_Hook.  It replaces the
+// synchronous IShellWindows enumeration that used to run on the Explorer UI
+// thread before the new window was even created.  The real destination window
+// is now found in RedirectThread, off the UI thread.
+// ---------------------------------------------------------------------------
+static bool IsCabinetWindowClass(HWND hwnd) {
+    WCHAR className[64];
+    return hwnd && GetClassNameW(hwnd, className, ARRAYSIZE(className)) &&
+           wcscmp(className, WC_CABINET) == 0;
+}
+
+static BOOL CALLBACK FindVisibleCabinetProc(HWND hwnd, LPARAM lParam) {
+    auto* found = reinterpret_cast<bool*>(lParam);
+    if (hwnd && IsWindowVisible(hwnd) && !IsPhantomWindow(hwnd) &&
+        IsCabinetWindowClass(hwnd)) {
+        *found = true;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static bool HasVisibleCabinetWindow() {
+    bool found = false;
+    EnumWindows(FindVisibleCabinetProc, reinterpret_cast<LPARAM>(&found));
+    return found;
 }
 
 // ---------------------------------------------------------------------------
@@ -1027,12 +1065,15 @@ HWND WINAPI CreateWindowExW_Hook(DWORD dwExStyle, LPCWSTR lpClassName,
         return original();
     }
 
-    HWND existing = FindExistingExplorer(nullptr);
+    ULONGLONG hookStart = GetTickCount64();
 
-    // First window
-    if (!existing) {
+    // First window / no other Explorer window: don't hide it at all.  This is
+    // a cheap Win32 check; the actual destination window is resolved later in
+    // RedirectThread so the UI thread isn't blocked by an IShellWindows scan.
+    if (!HasVisibleCabinetWindow()) {
         return original();
     }
+    ULONGLONG precheckDone = GetTickCount64();
 
     Wh_Log(L"Creating Explorer window");
     g_creatingExplorerWindow = true;
@@ -1042,6 +1083,10 @@ HWND WINAPI CreateWindowExW_Hook(DWORD dwExStyle, LPCWSTR lpClassName,
                                           hWndParent, hMenu, hInstance,
                                           lpParam);
 
+    ULONGLONG createDone = GetTickCount64();
+    Wh_Log(L"[v1-timing] hook precheck=%llu create=%llu",
+           static_cast<unsigned long long>(precheckDone - hookStart),
+           static_cast<unsigned long long>(createDone - precheckDone));
     Wh_Log(L"Created window %p", hwnd);
     g_creatingExplorerWindow = false;
 
@@ -1057,11 +1102,23 @@ HWND WINAPI CreateWindowExW_Hook(DWORD dwExStyle, LPCWSTR lpClassName,
         g_lastPrimaryWindow = hwnd;
         AddPhantomWindow(hwnd);
 
-        // Redirect — window is transparent, thread will close it
-        auto* ri = new RedirectInfo{hwnd, existing};
+        // Redirect — window is transparent, the thread finds the destination
+        // window and closes/restores this duplicate.
+        auto* ri = new (std::nothrow) RedirectInfo{hwnd};
+        if (!ri) {
+            AbortRedirect(hwnd);
+            return hwnd;
+        }
+
         HANDLE hThread =
             CreateThread(nullptr, 0, RedirectThread, ri, 0, nullptr);
-        if (hThread) CloseHandle(hThread);
+        if (hThread) {
+            CloseHandle(hThread);
+        } else {
+            Wh_Log(L"CreateThread failed for %p", hwnd);
+            delete ri;
+            AbortRedirect(hwnd);
+        }
     }
 
     return hwnd;

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la \"e:\\\\MyCode\\\\实用脚本\\\\windhawk mods\\\\explorer-single-window-tabs\\\\\")",
+      "Read(//e/MyCode/实用脚本/windhawk mods/**)"
+    ]
+  }
+}
